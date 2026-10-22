@@ -11,7 +11,7 @@ from retriever.model import RetrieverEncoder
 from retriever.sampling import classify_candidates, window_similarity
 
 
-def embed(model: RetrieverEncoder, windows: np.ndarray, device: torch.device, batch_size: int = 256) -> torch.Tensor:
+def embed(model: RetrieverEncoder, windows: np.ndarray, device: torch.device, batch_size: int = 8) -> torch.Tensor:
     model.eval()
     pieces: list[torch.Tensor] = []
     with torch.no_grad():
@@ -28,8 +28,8 @@ def evaluate_retrieval(
     config: Config,
     device: torch.device,
 ) -> dict:
-    query_embedding = embed(model, test.x, device)
-    database_embedding = embed(model, database.x, device)
+    query_embedding = embed(model, test.x, device, batch_size=config.eval_batch_size)
+    database_embedding = embed(model, database.x, device, batch_size=config.eval_batch_size)
     similarity = query_embedding @ database_embedding.T
     retrieved = torch.topk(similarity, k=config.top_k, dim=1).indices.numpy()
 

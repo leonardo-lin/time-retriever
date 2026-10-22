@@ -1,9 +1,11 @@
-"""正例门槛、年份切分和验证/测试随机划分的自检。"""
+"""正例门槛、年份切分、验证/测试随机划分，以及 MOMENT 补齐的自检。"""
 
 import numpy as np
+import torch
 
 from retriever.config import Config
 from retriever.data import _origins, pacific_midnight, random_eval_split
+from retriever.model import pad_to_moment
 from retriever.sampling import classify_candidates
 
 
@@ -49,9 +51,21 @@ def test_random_eval_split_uses_all_indices_and_is_not_chronological():
     assert not np.array_equal(val, np.arange(10))
 
 
+def test_pad_to_moment_masks_left_pad_only():
+    windows = torch.arange(504, dtype=torch.float32).unsqueeze(0)
+    x_enc, mask = pad_to_moment(windows)
+    assert tuple(x_enc.shape) == (1, 1, 512)
+    assert tuple(mask.shape) == (1, 512)
+    assert torch.equal(mask[0, :8], torch.zeros(8))
+    assert torch.equal(mask[0, 8:], torch.ones(504))
+    assert torch.equal(x_enc[0, 0, :8], torch.zeros(8))
+    assert torch.equal(x_enc[0, 0, 8:], windows[0])
+
+
 if __name__ == "__main__":
     test_positive_needs_top_tail_and_floor()
     test_positive_falls_back_to_argmax()
     test_train_origins_stay_in_2025_eval_starts_in_2026()
     test_random_eval_split_uses_all_indices_and_is_not_chronological()
+    test_pad_to_moment_masks_left_pad_only()
     print("ok")

@@ -42,15 +42,20 @@ class Config:
     lambda_contrastive: float = 1.0
     lambda_ranking: float = 1.0
 
-    # 256/4 在 216 条查询上第 4 轮检索见顶、测试比 64/2 更差。改回 PatchTST-Electricity 的 128/3。
+    # moment：本地 MOMENT-1-large + 一层投影。scratch：从零训练的小 Transformer。
+    encoder: str = "moment"
+    moment_path: str = "models/MOMENT-1-large"
+    # 先冻住主干只训投影，用来看 MOMENT 向量够不够当过去形状检索。
+    freeze_backbone: bool = True
     d_model: int = 128
     num_layers: int = 3
     num_heads: int = 8
     dropout: float = 0.2
-    # 每 24 小时合成一个 token。21 天就是 21 个 token。必须能整除 history_hours。
+    # scratch 用：每 24 小时合成一个 token。21 天就是 21 个 token。必须能整除 history_hours。
     patch_hours: int = 24
 
-    batch_size: int = 32
+    batch_size: int = 8
+    eval_batch_size: int = 8
     hard_negatives: int = 2
     easy_negatives: int = 2
     epochs: int = 100

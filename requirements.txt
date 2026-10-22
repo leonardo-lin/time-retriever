@@ -1,2 +1,4 @@
 numpy==2.5.4
 torch==2.14.1
+transformers
+# momentfm 锁死旧 numpy，Python 3.14 只能：pip install momentfm --no-deps

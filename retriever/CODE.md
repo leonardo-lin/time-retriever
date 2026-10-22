@@ -103,9 +103,9 @@ build_pools(queries, database, config)
 
 ### `model.py`：只认识负荷窗口
 
-`standardize_windows` 是 PyTorch 版的按窗口标准化，由 `RetrieverEncoder.forward` 调用。它和 `sampling.zscore_rows` 做同一件事，但一个在 GPU 张量上，一个在打标签的 NumPy 数组上，所以分成两个函数。
+`pad_to_moment` 把 `(batch, 504)` 左边补到 512，并给出 mask。`RetrieverEncoder.forward` 在 `encoder=moment` 时调用本地 MOMENT 的 `embed(reduction="mean")`，再投影成 128 维单位向量。冻住主干时 `train()` 会把 backbone 留在 eval，避免它的 dropout 改冻结特征。
 
-`RetrieverEncoder.forward(windows)` 的输入形状是 `(batch, 504)` 的原始负荷。它自己做四步：按窗口标准化，`patch` 把每 24 小时变成一个 token，`encoder` 做 Transformer，`output` 把 token 平均后投影成单位向量。返回值形状是 `(batch, d_model)`，默认 128 维。
+`encoder=scratch` 时仍走原来的小 Transformer：`standardize_windows`、按 24 小时切 token、编码、投影。`standardize_windows` 和 `sampling.zscore_rows` 做同一件事，只是一个在 GPU 上。
 
 这个类不读取 `Config` 以外的任何实验状态，也不知道检索库的存在。
 

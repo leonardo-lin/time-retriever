@@ -212,7 +212,14 @@ def main() -> None:
     )
 
     model = RetrieverEncoder(config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    print(
+        f"编码器 {config.encoder}，冻结主干 {config.freeze_backbone}，"
+        f"可训练参数 {sum(item.numel() for item in trainable)}"
+    )
+    if not trainable:
+        raise RuntimeError("没有可训练参数。若在用 MOMENT，检查 freeze_backbone 和投影层。")
+    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, weight_decay=config.weight_decay)
     train_rng = np.random.default_rng(config.seed)
     best_val = -float("inf")
     best_epoch = 0
