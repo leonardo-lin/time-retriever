@@ -45,8 +45,15 @@ class Config:
     # moment：本地 MOMENT-1-large + 一层投影。scratch：从零训练的小 Transformer。
     encoder: str = "moment"
     moment_path: str = "models/MOMENT-1-large"
-    # 先冻住主干只训投影，用来看 MOMENT 向量够不够当过去形状检索。
+    # 主干权重冻住。use_lora 时只在 T5 的 q/v 上加适配器。
     freeze_backbone: bool = True
+    use_lora: bool = True
+    lora_rank: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.05
+    lora_learning_rate: float = 1e-5
+    # 冻结探针最好的投影。空字符串表示随机初始化投影。
+    init_from: str = "runs/retriever/20261021-194514/encoder.pt"
     d_model: int = 128
     num_layers: int = 3
     num_heads: int = 8
@@ -58,7 +65,7 @@ class Config:
     eval_batch_size: int = 8
     hard_negatives: int = 2
     easy_negatives: int = 2
-    epochs: int = 100
+    epochs: int = 40
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
     grad_clip: float = 1.0

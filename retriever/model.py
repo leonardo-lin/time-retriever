@@ -46,6 +46,7 @@ class RetrieverEncoder(nn.Module):
         super().__init__()
         self.encoder_name = config.encoder
         self.freeze_backbone = bool(config.freeze_backbone)
+        self.use_lora = bool(config.use_lora)
         if config.encoder == "moment":
             self._init_moment(config)
         elif config.encoder == "scratch":
@@ -87,15 +88,37 @@ class RetrieverEncoder(nn.Module):
         backbone.init()
         self.backbone = backbone
         self.output = nn.Linear(int(backbone.config.d_model), config.d_model)
-        self._set_backbone_trainable(self.freeze_backbone)
+        if self.use_lora:
+            if not self.freeze_backbone:
+                raise ValueError("use_lora 时请保持 freeze_backbone=True，只训适配器和投影。")
+            self._set_backbone_trainable(True)
+            self._apply_lora(config)
+        else:
+            self._set_backbone_trainable(self.freeze_backbone)
 
     def _set_backbone_trainable(self, freeze: bool) -> None:
         for parameter in self.backbone.parameters():
             parameter.requires_grad = not freeze
 
+    def _apply_lora(self, config: Config) -> None:
+        try:
+            from peft import LoraConfig, get_peft_model
+        except ImportError as error:
+            raise RuntimeError("缺少 peft。在 venv 里执行：pip install peft") from error
+        self.backbone.encoder = get_peft_model(
+            self.backbone.encoder,
+            LoraConfig(
+                r=config.lora_rank,
+                lora_alpha=config.lora_alpha,
+                lora_dropout=config.lora_dropout,
+                target_modules=["q", "v"],
+                bias="none",
+            ),
+        )
+
     def train(self, mode: bool = True):
         super().train(mode)
-        if self.encoder_name == "moment" and self.freeze_backbone:
+        if self.encoder_name == "moment" and self.freeze_backbone and not self.use_lora:
             self.backbone.eval()
         return self
 

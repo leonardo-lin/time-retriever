@@ -144,6 +144,23 @@ def save_model(path: Path, model: RetrieverEncoder, config: Config) -> None:
     torch.save({"model": model.state_dict(), "config": config.to_dict()}, path)
 
 
+def resolve_path(root: Path, path: str) -> Path:
+    candidate = Path(path)
+    return candidate if candidate.is_absolute() else root / candidate
+
+
+def load_init_weights(model: RetrieverEncoder, path: Path) -> None:
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    missing, unexpected = model.load_state_dict(checkpoint["model"], strict=False)
+    missing_output = [name for name in missing if name.startswith("output.")]
+    if missing_output:
+        raise RuntimeError(f"{path} 里没有投影层权重，无法接着训。")
+    print(
+        f"从 {path} 载入投影。LoRA 新建 {len(missing)} 项；"
+        f"冻结存档里 {len(unexpected)} 项主干键名对不上，主干仍用 MOMENT 原权重"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="训练未来感知负荷检索器")
     parser.add_argument("--epochs", type=int)
@@ -152,6 +169,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int)
     parser.add_argument("--exit-when-done", action="store_true")
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--init-from", type=str)
     return parser.parse_args()
 
 
@@ -166,6 +184,8 @@ def main() -> None:
         config.batch_size = args.batch_size
     if args.port is not None:
         config.monitor_port = args.port
+    if args.init_from is not None:
+        config.init_from = args.init_from
 
     root = Path(__file__).resolve().parents[1]
     np.random.seed(config.seed)
@@ -212,14 +232,22 @@ def main() -> None:
     )
 
     model = RetrieverEncoder(config).to(device)
-    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if config.init_from:
+        load_init_weights(model, resolve_path(root, config.init_from))
+    head = [parameter for name, parameter in model.named_parameters() if parameter.requires_grad and name.startswith("output.")]
+    adapters = [parameter for name, parameter in model.named_parameters() if parameter.requires_grad and not name.startswith("output.")]
     print(
-        f"编码器 {config.encoder}，冻结主干 {config.freeze_backbone}，"
-        f"可训练参数 {sum(item.numel() for item in trainable)}"
+        f"编码器 {config.encoder}，冻结主干 {config.freeze_backbone}，LoRA {config.use_lora}，"
+        f"投影 {sum(item.numel() for item in head)}，适配器 {sum(item.numel() for item in adapters)}"
     )
-    if not trainable:
-        raise RuntimeError("没有可训练参数。若在用 MOMENT，检查 freeze_backbone 和投影层。")
-    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, weight_decay=config.weight_decay)
+    if not head and not adapters:
+        raise RuntimeError("没有可训练参数。若在用 MOMENT，检查 freeze_backbone、use_lora 和投影层。")
+    groups = []
+    if head:
+        groups.append({"params": head, "lr": config.learning_rate})
+    if adapters:
+        groups.append({"params": adapters, "lr": config.lora_learning_rate})
+    optimizer = torch.optim.AdamW(groups, weight_decay=config.weight_decay)
     train_rng = np.random.default_rng(config.seed)
     best_val = -float("inf")
     best_epoch = 0

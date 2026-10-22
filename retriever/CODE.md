@@ -103,7 +103,7 @@ build_pools(queries, database, config)
 
 ### `model.py`：只认识负荷窗口
 
-`pad_to_moment` 把 `(batch, 504)` 左边补到 512，并给出 mask。`RetrieverEncoder.forward` 在 `encoder=moment` 时调用本地 MOMENT 的 `embed(reduction="mean")`，再投影成 128 维单位向量。冻住主干时 `train()` 会把 backbone 留在 eval，避免它的 dropout 改冻结特征。
+`pad_to_moment` 把 `(batch, 504)` 左边补到 512，并给出 mask。`RetrieverEncoder.forward` 在 `encoder=moment` 时调用本地 MOMENT 的 `embed(reduction="mean")`，再投影成 128 维单位向量。`use_lora` 时用 peft 给 T5 encoder 的 `q`/`v` 加适配器，patch 嵌入仍冻结。只冻不训适配器时，`train()` 会把 backbone 留在 eval。`train.main` 若设了 `init_from`，会先载入冻结探针的投影，再开始 LoRA。
 
 `encoder=scratch` 时仍走原来的小 Transformer：`standardize_windows`、按 24 小时切 token、编码、投影。`standardize_windows` 和 `sampling.zscore_rows` 做同一件事，只是一个在 GPU 上。
 

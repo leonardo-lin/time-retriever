@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-Hans">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>检索器训练监控</title>
+  <title>Retriever training monitor</title>
   <style>
     :root {
       color-scheme: light;
@@ -16,7 +16,7 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "PingFang SC", serif;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
       color: var(--ink);
       background: var(--paper);
     }
@@ -34,7 +34,7 @@
       border-radius: 14px;
       padding: 14px 16px;
     }
-    .card span, .panel span { display: block; color: var(--muted); font-size: 13px; font-family: "PingFang SC", sans-serif; }
+    .card span, .panel span { display: block; color: var(--muted); font-size: 13px; font-family: system-ui, sans-serif; }
     .card strong, .panel strong { display: block; margin-top: 6px; font-size: 22px; font-variant-numeric: tabular-nums; }
     .panel strong { font-size: 16px; }
     canvas { width: 100%; height: 420px; display: block; }
@@ -47,21 +47,21 @@
 </head>
 <body>
 <main>
-  <h1>检索器训练</h1>
-  <p class="muted" id="status">正在连接训练进程…</p>
+  <h1>Retriever training</h1>
+  <p class="muted" id="status">Connecting to the training process…</p>
   <section class="cards">
-    <div class="card"><span>训练总损失</span><strong id="train-loss">—</strong></div>
-    <div class="card"><span>对比损失</span><strong id="con-loss">—</strong></div>
-    <div class="card"><span>排序损失</span><strong id="rank-loss">—</strong></div>
-    <div class="card"><span>验证总损失</span><strong id="val-loss">—</strong></div>
-    <div class="card"><span>验证检索</span><strong id="val-retr">—</strong></div>
+    <div class="card"><span>Train loss</span><strong id="train-loss">—</strong></div>
+    <div class="card"><span>Contrastive</span><strong id="con-loss">—</strong></div>
+    <div class="card"><span>Ranking</span><strong id="rank-loss">—</strong></div>
+    <div class="card"><span>Val loss</span><strong id="val-loss">—</strong></div>
+    <div class="card"><span>Val retrieval</span><strong id="val-retr">—</strong></div>
   </section>
-  <h2>损失曲线</h2>
+  <h2>Loss curves</h2>
   <div class="panel"><canvas id="chart" width="1040" height="420"></canvas></div>
-  <h2>这次实验的数据</h2>
+  <h2>Data for this run</h2>
   <section class="split" id="split"></section>
-  <h2>测试检索</h2>
-  <div class="panel" id="test-box"><span>训练结束后才会出现。比较的是检索到的历史未来有多像，不是负荷预测误差。</span></div>
+  <h2>Test retrieval</h2>
+  <div class="panel" id="test-box"><span>Shown after training. This compares how similar the retrieved historical futures are, not load forecast error.</span></div>
 </main>
 <script>
 const COLORS = {
@@ -103,7 +103,7 @@ function drawChart(steps, epochs) {
   ctx.font = "14px sans-serif";
   ctx.fillStyle = "#5d6b7c";
   if (!all.length) {
-    ctx.fillText("还没有损失，训练开始后这里会每秒更新。", pad.left, pad.top + 24);
+    ctx.fillText("No losses yet. This updates every second once training starts.", pad.left, pad.top + 24);
     return;
   }
   const min = Math.min(...all);
@@ -166,19 +166,19 @@ function drawChart(steps, epochs) {
 
   ctx.fillStyle = "#1c2430";
   const legend = [
-    ["总损失", COLORS.total],
-    ["对比", COLORS.contrastive],
-    ["排序", COLORS.ranking],
-    ["验证", COLORS.validation]
+    ["Total", COLORS.total],
+    ["Contrastive", COLORS.contrastive],
+    ["Ranking", COLORS.ranking],
+    ["Val", COLORS.validation]
   ];
   legend.forEach((item, index) => {
-    const x = pad.left + index * 110;
+    const x = pad.left + index * 140;
     ctx.fillStyle = item[1];
     ctx.fillRect(x, height - 22, 14, 8);
     ctx.fillStyle = "#1c2430";
     ctx.fillText(item[0], x + 20, height - 14);
   });
-  ctx.fillText("训练步", width - 80, height - 14);
+  ctx.fillText("Step", width - 56, height - 14);
 }
 
 function showNumber(id, value) {
@@ -187,25 +187,25 @@ function showNumber(id, value) {
 
 function renderSummary(summary) {
   const blocks = [
-    ["检索库", `${summary.database_cases} 条`, `${summary.database_origin_start} → ${summary.database_future_end}`],
-    ["训练查询", `${summary.train_cases} 条`, `${summary.train_start} → ${summary.train_end}`],
-    ["验证 / 测试", `${summary.val_cases} / ${summary.test_cases} 条`, `测试 ${summary.test_start} → ${summary.test_end}`]
+    ["Database", `${summary.database_cases} cases`, `${summary.database_origin_start} → ${summary.database_future_end}`],
+    ["Train queries", `${summary.train_cases} cases`, `${summary.train_start} → ${summary.train_end}`],
+    ["Val / test", `${summary.val_cases} / ${summary.test_cases} cases`, `Test ${summary.test_start} → ${summary.test_end}`]
   ];
   document.getElementById("split").innerHTML = blocks.map(item =>
-    `<div class="panel"><span>${item[0]}</span><strong>${item[1]}</strong><span>${item[2]}</span><span>检索库未来与第一条查询相隔 ${summary.leakage_gap_hours} 小时</span></div>`
+    `<div class="panel"><span>${item[0]}</span><strong>${item[1]}</strong><span>${item[2]}</span><span>Database future ends ${summary.leakage_gap_hours} hours before the first query</span></div>`
   ).join("");
 }
 
 function renderTest(row) {
   if (!row) return;
-  const hard = row.hard_negative_rate == null ? "没有难负例" : row.hard_negative_rate.toFixed(4);
+  const hard = row.hard_negative_rate == null ? "none" : row.hard_negative_rate.toFixed(4);
   document.getElementById("test-box").innerHTML = `
-    <span>Top-${row.top_k} 历史案例的平均未来相似度。Oracle 只用真实未来挑案例，是上界，不能当预测方法。</span>
+    <span>Mean future similarity of the Top-${row.top_k} historical cases. Oracle ranks by true future similarity; it is an upper bound, not a forecasting method.</span>
     <ul>
-      <li>本次检索器：${row.retrieved_future_similarity.toFixed(4)}</li>
-      <li>随机检索：${row.random_future_similarity.toFixed(4)}</li>
-      <li>Oracle 上界：${row.oracle_future_similarity.toFixed(4)}</li>
-      <li>难负例占比：${hard}</li>
+      <li>This retriever: ${row.retrieved_future_similarity.toFixed(4)}</li>
+      <li>Random: ${row.random_future_similarity.toFixed(4)}</li>
+      <li>Oracle upper bound: ${row.oracle_future_similarity.toFixed(4)}</li>
+      <li>Hard-negative rate: ${hard}</li>
     </ul>`;
 }
 
@@ -225,12 +225,12 @@ async function refresh() {
     showNumber("val-loss", lastEpoch ? lastEpoch.val_loss : NaN);
     showNumber("val-retr", lastEpoch ? lastEpoch.val_retrieved_future_similarity : NaN);
     document.getElementById("status").textContent = last
-      ? `第 ${last.epoch} 轮，第 ${last.step} 步。曲线每秒刷新，粗线是最近 8 步平均。`
-      : "数据已就绪，正在构造监督或开始第一步。";
+      ? `Epoch ${last.epoch}, step ${last.step}. The chart refreshes every second; the thick line is an 8-step moving average.`
+      : "Data is ready. Building labels or starting the first step.";
     drawChart(steps, epochs);
     renderTest(test);
   } catch (error) {
-    document.getElementById("status").textContent = "监控页面暂时连不上训练进程。";
+    document.getElementById("status").textContent = "Monitor cannot reach the training process.";
   }
 }
 refresh();
