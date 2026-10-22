@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>检索器训练监控</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c2430;
+      --muted: #5d6b7c;
+      --line: #d9e0e8;
+      --paper: #f6f8fb;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "PingFang SC", serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 32px; font-weight: 600; margin: 0 0 8px; }
+    h2 { font-size: 18px; margin: 28px 0 12px; }
+    p { line-height: 1.55; }
+    .muted { color: var(--muted); }
+    .cards, .split { display: grid; gap: 12px; }
+    .cards { grid-template-columns: repeat(5, 1fr); margin-top: 20px; }
+    .split { grid-template-columns: repeat(3, 1fr); }
+    .card, .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+    .card span, .panel span { display: block; color: var(--muted); font-size: 13px; font-family: "PingFang SC", sans-serif; }
+    .card strong, .panel strong { display: block; margin-top: 6px; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .panel strong { font-size: 16px; }
+    canvas { width: 100%; height: 420px; display: block; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li { margin: 4px 0; }
+    @media (max-width: 800px) {
+      .cards, .split { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>检索器训练</h1>
+  <p class="muted" id="status">正在连接训练进程…</p>
+  <section class="cards">
+    <div class="card"><span>训练总损失</span><strong id="train-loss">—</strong></div>
+    <div class="card"><span>对比损失</span><strong id="con-loss">—</strong></div>
+    <div class="card"><span>排序损失</span><strong id="rank-loss">—</strong></div>
+    <div class="card"><span>验证总损失</span><strong id="val-loss">—</strong></div>
+    <div class="card"><span>验证检索</span><strong id="val-retr">—</strong></div>
+  </section>
+  <h2>损失曲线</h2>
+  <div class="panel"><canvas id="chart" width="1040" height="420"></canvas></div>
+  <h2>这次实验的数据</h2>
+  <section class="split" id="split"></section>
+  <h2>测试检索</h2>
+  <div class="panel" id="test-box"><span>训练结束后才会出现。比较的是检索到的历史未来有多像，不是负荷预测误差。</span></div>
+</main>
+<script>
+const COLORS = {
+  total: "#1f4b99",
+  contrastive: "#c47b00",
+  ranking: "#0d7a4f",
+  validation: "#b42318"
+};
+
+function meanTrailing(values, width) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= width) sum -= values[i - width];
+    out.push(sum / Math.min(i + 1, width));
+  }
+  return out;
+}
+
+function drawChart(steps, epochs) {
+  const canvas = document.getElementById("chart");
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  const pad = { left: 64, right: 24, top: 24, bottom: 42 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const series = [];
+  if (steps.length) {
+    const total = steps.map(row => row.loss);
+    series.push({ color: COLORS.total, values: meanTrailing(total, 8), width: 2.5 });
+    series.push({ color: COLORS.contrastive, values: meanTrailing(steps.map(row => row.contrastive), 8), width: 1.5 });
+    series.push({ color: COLORS.ranking, values: meanTrailing(steps.map(row => row.ranking), 8), width: 1.5 });
+  }
+  const valPoints = epochs.filter(row => Number.isFinite(row.val_loss));
+  const all = series.flatMap(item => item.values).concat(valPoints.map(row => row.val_loss));
+  ctx.font = "14px sans-serif";
+  ctx.fillStyle = "#5d6b7c";
+  if (!all.length) {
+    ctx.fillText("还没有损失，训练开始后这里会每秒更新。", pad.left, pad.top + 24);
+    return;
+  }
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const span = Math.max(max - min, 1e-6);
+  const y0 = min - span * 0.08;
+  const y1 = max + span * 0.08;
+  const xCount = Math.max(steps.length, valPoints.length ? valPoints[valPoints.length - 1].step : 1);
+
+  function xOf(step) { return pad.left + (step / xCount) * plotW; }
+  function yOf(value) { return pad.top + (1 - (value - y0) / (y1 - y0)) * plotH; }
+
+  ctx.strokeStyle = "#e4ebf2";
+  ctx.lineWidth = 1;
+  for (let tick = 0; tick <= 4; tick++) {
+    const value = y0 + (y1 - y0) * (tick / 4);
+    const y = yOf(value);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
+    ctx.fillStyle = "#5d6b7c";
+    ctx.fillText(value.toFixed(3), 8, y + 4);
+  }
+
+  function stroke(values, color, lineWidth) {
+    ctx.beginPath();
+    values.forEach((value, index) => {
+      const x = xOf(index + 1);
+      const y = yOf(value);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+  series.forEach(item => stroke(item.values, item.color, item.width));
+
+  if (valPoints.length) {
+    ctx.beginPath();
+    valPoints.forEach((row, index) => {
+      const x = xOf(row.step);
+      const y = yOf(row.val_loss);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = COLORS.validation;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    valPoints.forEach(row => {
+      ctx.beginPath();
+      ctx.arc(xOf(row.step), yOf(row.val_loss), 4, 0, Math.PI * 2);
+      ctx.fillStyle = COLORS.validation;
+      ctx.fill();
+    });
+  }
+
+  ctx.fillStyle = "#1c2430";
+  const legend = [
+    ["总损失", COLORS.total],
+    ["对比", COLORS.contrastive],
+    ["排序", COLORS.ranking],
+    ["验证", COLORS.validation]
+  ];
+  legend.forEach((item, index) => {
+    const x = pad.left + index * 110;
+    ctx.fillStyle = item[1];
+    ctx.fillRect(x, height - 22, 14, 8);
+    ctx.fillStyle = "#1c2430";
+    ctx.fillText(item[0], x + 20, height - 14);
+  });
+  ctx.fillText("训练步", width - 80, height - 14);
+}
+
+function showNumber(id, value) {
+  document.getElementById(id).textContent = Number.isFinite(value) ? value.toFixed(4) : "—";
+}
+
+function renderSummary(summary) {
+  const blocks = [
+    ["检索库", `${summary.database_cases} 条`, `${summary.database_origin_start} → ${summary.database_future_end}`],
+    ["训练查询", `${summary.train_cases} 条`, `${summary.train_start} → ${summary.train_end}`],
+    ["验证 / 测试", `${summary.val_cases} / ${summary.test_cases} 条`, `测试 ${summary.test_start} → ${summary.test_end}`]
+  ];
+  document.getElementById("split").innerHTML = blocks.map(item =>
+    `<div class="panel"><span>${item[0]}</span><strong>${item[1]}</strong><span>${item[2]}</span><span>检索库未来与第一条查询相隔 ${summary.leakage_gap_hours} 小时</span></div>`
+  ).join("");
+}
+
+function renderTest(row) {
+  if (!row) return;
+  const hard = row.hard_negative_rate == null ? "没有难负例" : row.hard_negative_rate.toFixed(4);
+  document.getElementById("test-box").innerHTML = `
+    <span>Top-${row.top_k} 历史案例的平均未来相似度。Oracle 只用真实未来挑案例，是上界，不能当预测方法。</span>
+    <ul>
+      <li>本次检索器：${row.retrieved_future_similarity.toFixed(4)}</li>
+      <li>随机检索：${row.random_future_similarity.toFixed(4)}</li>
+      <li>Oracle 上界：${row.oracle_future_similarity.toFixed(4)}</li>
+      <li>难负例占比：${hard}</li>
+    </ul>`;
+}
+
+async function refresh() {
+  try {
+    const [summaryRes, metricRes] = await Promise.all([fetch("/api/summary"), fetch("/api/metrics")]);
+    if (summaryRes.ok) renderSummary(await summaryRes.json());
+    const rows = metricRes.ok ? await metricRes.json() : [];
+    const steps = rows.filter(row => row.kind === "step");
+    const epochs = rows.filter(row => row.kind === "epoch");
+    const test = rows.findLast(row => row.kind === "test");
+    const last = steps[steps.length - 1];
+    const lastEpoch = epochs[epochs.length - 1];
+    showNumber("train-loss", last ? last.loss : NaN);
+    showNumber("con-loss", last ? last.contrastive : NaN);
+    showNumber("rank-loss", last ? last.ranking : NaN);
+    showNumber("val-loss", lastEpoch ? lastEpoch.val_loss : NaN);
+    showNumber("val-retr", lastEpoch ? lastEpoch.val_retrieved_future_similarity : NaN);
+    document.getElementById("status").textContent = last
+      ? `第 ${last.epoch} 轮，第 ${last.step} 步。曲线每秒刷新，粗线是最近 8 步平均。`
+      : "数据已就绪，正在构造监督或开始第一步。";
+    drawChart(steps, epochs);
+    renderTest(test);
+  } catch (error) {
+    document.getElementById("status").textContent = "监控页面暂时连不上训练进程。";
+  }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

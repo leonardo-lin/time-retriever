@@ -10,21 +10,21 @@
 
 ---
 
+
+
 # 1. Research Objective
+
+
 
 ## 1.1 Problem Definition
 
 Given an observed historical window:
 
-\[
 X = [x_{t-L+1}, ..., x_t]
-\]
 
 predict the future load:
 
-\[
 Y = [x_{t+1}, ..., x_{t+H}]
-\]
 
 where:
 
@@ -33,15 +33,11 @@ where:
 
 The proposed framework retrieves historical forecasting cases:
 
-\[
 (X_i, Y_i)
-\]
 
 from a historical database and uses them as additional evidence for forecasting the current target:
 
-\[
-\hat{Y} = G(X, \{X_i,Y_i\}_{i=1}^{K})
-\]
+\hat{Y} = G(X, X_i,Y_i_{i=1}^{K})
 
 where:
 
@@ -53,7 +49,11 @@ where:
 
 ---
 
+
+
 # 2. Research Hypothesis
+
+
 
 ## H1 — Retrieval Benefit
 
@@ -76,6 +76,8 @@ Historical cases with substantially different past patterns but similar future t
 Historical cases with highly similar past patterns but substantially different future trajectories are particularly useful hard negatives because they expose the weakness of naive past-similarity retrieval.
 
 ---
+
+
 
 # 3. Overall System
 
@@ -124,7 +126,11 @@ The future target `Y` is never an inference-time retriever input.
 
 ---
 
+
+
 # 4. Data Representation
+
+
 
 ## 4.1 Forecasting Sample
 
@@ -147,6 +153,8 @@ X:
 Y:
 [t+1, ..., t+H]
 ```
+
+
 
 ## 4.2 Recommended Initial Configuration
 
@@ -178,7 +186,11 @@ Do not hard-code these values inside model code.
 
 ---
 
+
+
 # 5. Input Features
+
+
 
 ## 5.1 Required Baseline Feature
 
@@ -187,6 +199,8 @@ At minimum:
 ```text
 load
 ```
+
+
 
 ## 5.2 Optional Exogenous Features
 
@@ -222,7 +236,11 @@ This allows ablation experiments.
 
 ---
 
+
+
 # 6. Dataset Construction
+
+
 
 ## 6.1 Sliding Window
 
@@ -245,6 +263,8 @@ Example:
                     ↓
 2025-01-15 00:00 → 2025-01-15 23:00
 ```
+
+
 
 ## 6.2 Historical Candidate Definition
 
@@ -276,6 +296,7 @@ for strict historical retrieval.
 Never allow:
 
 ```text candidate X or Y
+
 ```
 
 to contain information from the current target period.
@@ -283,6 +304,8 @@ to contain information from the current target period.
 For a current target beginning at `T`, candidate data must end before `T`.
 
 ---
+
+
 
 # 7. Dataset Split
 
@@ -329,6 +352,8 @@ For the cleanest evaluation of generalization, the default test protocol should 
 
 ---
 
+
+
 # 8. Normalization
 
 Load values can differ substantially across periods.
@@ -337,9 +362,7 @@ The implementation must support:
 
 ### Option A — Global normalization
 
-\[
 x' = \frac{x-\mu_{train}}{\sigma_{train}}
-\]
 
 Use statistics calculated from training data only.
 
@@ -347,9 +370,7 @@ Use statistics calculated from training data only.
 
 For each window:
 
-\[
 x'_t = \frac{x_t-\mu_X}{\sigma_X}
-\]
 
 This emphasizes shape similarity.
 
@@ -364,6 +385,8 @@ Compare:
 Do not silently mix normalization strategies.
 
 ---
+
+
 
 # 9. Retrieval Unit
 
@@ -395,7 +418,11 @@ Example:
 
 ---
 
+
+
 # 10. Retriever Architecture
+
+
 
 ## 10.1 Retriever Input
 
@@ -445,21 +472,15 @@ These are starting values, not fixed research conclusions.
 
 The encoder converts each time-series window into:
 
-\[
 z_X = Encoder(X)
-\]
 
 and:
 
-\[
 z_i = Encoder(X_i)
-\]
 
 Similarity:
 
-\[
 S_p(X,X_i)=cos(z_X,z_i)
-\]
 
 Initial implementation should use cosine similarity.
 
@@ -467,7 +488,11 @@ Alternative similarity functions may be evaluated later.
 
 ---
 
+
+
 # 11. Candidate Retrieval
+
+
 
 ## 11.1 Retrieval Database
 
@@ -481,6 +506,8 @@ Y
 timestamp
 metadata
 ```
+
+
 
 ## 11.2 ANN Index
 
@@ -521,6 +548,8 @@ retrieval:
 
 ---
 
+
+
 # 12. Candidate Filtering
 
 Before accepting a candidate:
@@ -543,6 +572,8 @@ These should be experimental filters, not mandatory assumptions.
 
 ---
 
+
+
 # 13. Future-Aware Supervision
 
 For each current training sample:
@@ -558,15 +589,11 @@ Calculate:
 
 ### Past similarity
 
-\[
 S_p = sim(X,X_i)
-\]
 
 ### Future similarity
 
-\[
 S_f = sim(Y,Y_i)
-\]
 
 The exact similarity function must be configurable.
 
@@ -579,30 +606,30 @@ correlation
 
 For example:
 
-\[
 D_f(Y,Y_i)=MSE(normalize(Y),normalize(Y_i))
-\]
 
 and convert distance to relevance:
 
-\[
 S_f = \exp(-D_f/\tau)
-\]
 
 where `tau` is a temperature parameter.
 
 ---
 
+
+
 # 14. Positive / Negative Taxonomy
 
 Use a two-dimensional classification.
 
-| Past Similarity | Future Similarity | Category |
-|---|---|---|
-| High | High | Strong Positive |
-| High | Low | Hard Negative |
-| Low | High | Future Positive |
-| Low | Low | Easy Negative |
+
+| Past Similarity | Future Similarity | Category        |
+| --------------- | ----------------- | --------------- |
+| High            | High              | Strong Positive |
+| High            | Low               | Hard Negative   |
+| Low             | High              | Future Positive |
+| Low             | Low               | Easy Negative   |
+
 
 Important:
 
@@ -627,6 +654,8 @@ This should NOT automatically be treated as negative.
 Historical case has both different past and different future.
 
 ---
+
+
 
 # 15. Thresholds
 
@@ -653,6 +682,8 @@ Perform sensitivity analysis later.
 
 ---
 
+
+
 # 16. Retriever Training Objective
 
 There are two recommended stages.
@@ -669,9 +700,8 @@ negative Xi
 
 and an InfoNCE-style loss:
 
-\[
 L_{retriever}
-=
+
 -\log
 \frac{
 \exp(sim(z_X,z_{pos})/\tau)
@@ -680,7 +710,6 @@ L_{retriever}
 +
 \sum_j \exp(sim(z_X,z_{neg,j})/\tau)
 }
-\]
 
 This provides a clear baseline.
 
@@ -690,23 +719,17 @@ Use future similarity as a relevance signal.
 
 Desired behavior:
 
-\[
 R(X,X_a)>R(X,X_b)
-\]
 
 if:
 
-\[
 S_f(Y,Y_a)>S_f(Y,Y_b)
-\]
 
 A ranking loss can be used:
 
-\[
 L_{rank}
-=
+
 \max(0,m-R(X,X^+)+R(X,X^-))
-\]
 
 where:
 
@@ -716,16 +739,16 @@ where:
 
 ---
 
+
+
 # 17. Recommended Retriever Loss
 
 A combined objective can be implemented:
 
-\[
 L_R =
 \lambda_{con}L_{contrastive}
 +
 \lambda_{rank}L_{ranking}
-\]
 
 Start with:
 
@@ -740,7 +763,11 @@ Do not assume this combined loss is optimal.
 
 ---
 
+
+
 # 18. Generator
+
+
 
 ## 18.1 Generator Input
 
@@ -754,10 +781,8 @@ Retrieved historical cases
 
 Initial proposed representation:
 
-\[
-G(X,\{X_i,Y_i\}_{i=1}^{K})
+G(X,X_i,Y_i_{i=1}^{K})
 \rightarrow \hat{Y}
-\]
 
 Therefore each retrieved example contains:
 
@@ -765,6 +790,8 @@ Therefore each retrieved example contains:
 Xi
 Yi
 ```
+
+
 
 ## 18.2 Why Include Xi?
 
@@ -781,6 +808,8 @@ C: Current X + retrieved Xi + Yi
 ```
 
 ---
+
+
 
 # 19. Generator Architecture
 
@@ -820,27 +849,25 @@ The exact architecture should remain modular.
 
 ---
 
+
+
 # 20. Generator Loss
 
 For deterministic forecasting:
 
 ### MAE
 
-\[
 L_{MAE}
-=
+
 \frac{1}{H}
 \sum_{h=1}^{H}|Y_h-\hat{Y}_h|
-\]
 
 ### MSE
 
-\[
 L_{MSE}
-=
+
 \frac{1}{H}
 \sum_{h=1}^{H}(Y_h-\hat{Y}_h)^2
-\]
 
 Initial training can use MSE.
 
@@ -855,6 +882,8 @@ Do not optimize directly for MAPE if zero/near-zero loads are possible.
 
 ---
 
+
+
 # 21. End-to-End Training Strategy
 
 Use staged training first.
@@ -864,17 +893,22 @@ Use staged training first.
 Input:
 
 ```text X, Xi
+
 ```
 
 Supervision:
 
 ```text Y, Yi
+
 ```
 
 Output:
 
 ```text retrieval relevance
+
 ```
+
+
 
 ## Stage B — Freeze Retriever
 
@@ -883,7 +917,10 @@ Retrieve top-K historical examples.
 Train generator:
 
 ```text X + retrieved Xi,Yi → Y
+
 ```
+
+
 
 ## Stage C — Optional Joint Fine-Tuning
 
@@ -901,6 +938,8 @@ Joint optimization may be attempted.
 However, initial experiments should avoid joint training because retrieval changes can make the system unstable and make debugging difficult.
 
 ---
+
+
 
 # 22. Preventing Data Leakage
 
@@ -924,6 +963,8 @@ future load-derived statistics
 future target-derived labels
 ```
 
+
+
 ## Generator
 
 Generator receives retrieved `Yi` because `Yi` belongs to historical cases.
@@ -943,6 +984,8 @@ This is allowed because it is training supervision.
 
 ---
 
+
+
 # 23. Important Leakage Edge Case
 
 If a candidate's future `Yi` overlaps the current sample's target period, reject the candidate.
@@ -950,16 +993,20 @@ If a candidate's future `Yi` overlaps the current sample's target period, reject
 For current target:
 
 ```text T+1 ... T+H
+
 ```
 
 candidate must satisfy:
 
 ```text candidate_future_end < T+1
+
 ```
 
 This must be explicitly checked in code.
 
 ---
+
+
 
 # 24. Baseline Experiments
 
@@ -970,6 +1017,8 @@ At minimum implement:
 ```text
 X → Forecasting Model → Y
 ```
+
+
 
 ## Baseline 1 — Random Retrieval
 
@@ -1028,62 +1077,25 @@ Training uses future-aware supervision.
 
 ---
 
-# 25. Recommended Ablation Studies
 
-## Retrieval Information
-
-```text A: X only
- B: X + calendar
- C: X + weather
- D: X + calendar + weather
-```
-
-## Retrieved Content
-
-```text A: Yi only
-B: Xi + Yi
-```
-
-## Retrieval Strategy
-
-```text A: Random
-B: Past similarity
-C: Learned retriever
-D: Future-aware learned retriever
-```
-
-## Number of Retrieved Cases
-
-```text K = 1
-K = 3
-K = 5
-K = 10
-K = 20
-```
-
-## Hard Negative Strategy
-
-```text A: Random negatives
-B: ANN hard negatives
-C: Past-similar / future-dissimilar negatives
-D: Mixed negatives
-```
-
----
 
 # 26. Main Experiment Table
 
 The main result table should eventually resemble:
 
-| Method | Retrieval | Future-aware Training | MAE | RMSE | MAPE |
-|---|---|---|---:|---:|---:|
-| Forecasting Baseline | None | No | | | |
-| Random Retrieval | Random | No | | | |
-| RAFT-style | Past similarity | No | | | |
-| Learned Retriever | Learned | No | | | |
-| Proposed | Future-aware | Yes | | | |
+
+| Method               | Retrieval       | Future-aware Training | MAE | RMSE | MAPE |
+| -------------------- | --------------- | --------------------- | --- | ---- | ---- |
+| Forecasting Baseline | None            | No                    |     |      |      |
+| Random Retrieval     | Random          | No                    |     |      |      |
+| RAFT-style           | Past similarity | No                    |     |      |      |
+| Learned Retriever    | Learned         | No                    |     |      |      |
+| Proposed             | Future-aware    | Yes                   |     |      |      |
+
 
 ---
+
+
 
 # 27. Retrieval Evaluation
 
@@ -1095,17 +1107,16 @@ Evaluate retrieval itself.
 
 If ground-truth relevant historical cases are defined:
 
-\[
 Recall@K =
-\frac{\# relevant\ cases\ retrieved\ in\ top-K}
-{\# relevant\ cases}
-\]
+\frac{ relevant\ cases\ retrieved\ in\ top-K}
+{ relevant\ cases}
 
 ## Future Similarity of Retrieved Cases
 
 Report:
 
 ```text average Future Similarity @ K
+
 ```
 
 Compare:
@@ -1114,6 +1125,8 @@ Compare:
 past similarity
 proposed retriever
 ```
+
+
 
 ## Hard Negative Retrieval Rate
 
@@ -1127,6 +1140,8 @@ low Future Similarity
 A successful retriever should reduce these cases.
 
 ---
+
+
 
 # 28. Forecasting Evaluation by Horizon
 
@@ -1149,6 +1164,8 @@ Retrieval may help long-horizon forecasting differently from short-horizon forec
 
 ---
 
+
+
 # 29. Forecasting Evaluation by Regime
 
 If data allows, evaluate separately for:
@@ -1167,6 +1184,8 @@ This can reveal whether retrieval is especially useful during unusual regimes.
 
 ---
 
+
+
 # 30. Visualization Requirements
 
 At minimum produce:
@@ -1177,6 +1196,8 @@ At minimum produce:
 Actual Y
 Predicted Ŷ
 ```
+
+
 
 ## 30.2 Retrieved Cases
 
@@ -1194,6 +1215,8 @@ Actual Y
 Retrieved Y1, Y2, ..., YK
 Predicted Ŷ
 ```
+
+
 
 ## 30.3 Retrieval 2D Analysis
 
@@ -1214,6 +1237,8 @@ Easy Negative
 This visualization is especially important for validating the proposed research idea.
 
 ---
+
+
 
 # 31. Data Pipeline
 
@@ -1253,6 +1278,8 @@ Each stage should save reproducible intermediate metadata.
 
 ---
 
+
+
 # 32. Missing Data
 
 Define explicit rules.
@@ -1266,11 +1293,13 @@ max_missing_ratio: 0.05
 If missing ratio exceeds threshold:
 
 ```text discard window
+
 ```
 
 Otherwise:
 
 ```text interpolate / impute
+
 ```
 
 The imputation strategy must be documented.
@@ -1278,6 +1307,8 @@ The imputation strategy must be documented.
 Never allow future information to enter past-window imputation.
 
 ---
+
+
 
 # 33. Reproducibility
 
@@ -1311,6 +1342,8 @@ seed: 42
 Use multiple seeds for final experiments.
 
 ---
+
+
 
 # 34. Suggested Project Structure
 
@@ -1369,7 +1402,11 @@ project/
 
 ---
 
+
+
 # 35. Development Phases
+
+
 
 ## Phase 1 — Data Pipeline
 
@@ -1387,6 +1424,8 @@ Implement:
 
 ---
 
+
+
 ## Phase 2 — Forecasting Baseline
 
 Implement:
@@ -1400,6 +1439,8 @@ No retrieval.
 **Deliverable:** baseline MAE/RMSE/MAPE.
 
 ---
+
+
 
 ## Phase 3 — Conventional RAFT Baseline
 
@@ -1421,6 +1462,8 @@ Generator
 
 ---
 
+
+
 ## Phase 4 — Retriever
 
 Implement:
@@ -1436,6 +1479,8 @@ ANN retrieval
 **Deliverable:** learned retrieval system.
 
 ---
+
+
 
 ## Phase 5 — Future-Aware Supervision
 
@@ -1455,6 +1500,8 @@ contrastive/ranking loss
 
 ---
 
+
+
 ## Phase 6 — Generator Integration
 
 Implement:
@@ -1473,6 +1520,8 @@ Generator
 
 ---
 
+
+
 ## Phase 7 — Ablation
 
 Run:
@@ -1489,6 +1538,8 @@ Run:
 
 ---
 
+
+
 ## Phase 8 — Analysis
 
 Analyze:
@@ -1502,6 +1553,8 @@ Analyze:
 - failure cases
 
 ---
+
+
 
 # 36. Critical Failure Cases to Investigate
 
@@ -1532,11 +1585,15 @@ Retriever selects an apparently similar case
 but generator becomes worse
 ```
 
+
+
 ### Case D
 
 ```text
 Retrieved cases are nearly duplicates
 ```
+
+
 
 ### Case E
 
@@ -1547,6 +1604,8 @@ Retrieved case comes from an inappropriate season/regime
 These examples should be manually inspected.
 
 ---
+
+
 
 # 37. Important Research Interpretation
 
@@ -1562,35 +1621,29 @@ This distinction should be maintained throughout the paper.
 
 ---
 
+
+
 # 38. Recommended Terminology
 
 Use:
 
 ### Historical Case
 
-\[
 (X_i,Y_i)
-\]
 
 rather than simply "document".
 
 ### Query / Current Case
 
-\[
 X
-\]
 
 ### Past Similarity
 
-\[
 S_p
-\]
 
 ### Future Similarity
 
-\[
 S_f
-\]
 
 ### Future-aware Retrieval
 
@@ -1610,66 +1663,54 @@ Low past similarity but high future similarity.
 
 ---
 
+
+
 # 39. Final Mathematical Definition
 
 Current forecasting task:
 
-\[
 Y=f(X)
-\]
 
 Standard forecasting:
 
-\[
 \hat{Y}=G(X)
-\]
 
 RAFT-style forecasting:
 
-\[
 \hat{Y}
-=
+
 G(X,\mathcal{R}(X))
-\]
 
 where:
 
-\[
 \mathcal{R}(X)
-=
-\{(X_i,Y_i)\}_{i=1}^{K}
-\]
+
+(X_i,Y_i)_{i=1}^{K}
 
 The proposed future-aware retriever is trained using:
 
-\[
 R_\theta(X,X_i)
-\]
 
 while future trajectories provide supervision:
 
-\[
 S_f(Y,Y_i)
-\]
 
 The desired relationship is:
 
-\[
 R_\theta(X,X_i)
 \approx
 f(S_f(Y,Y_i),S_p(X,X_i))
-\]
 
 but at inference:
 
-\[
 \boxed{
 \mathcal{R}(X)
 \text{ uses only information available before the forecast horizon.}
 }
-\]
 
 ---
+
+
 
 # 40. Final Research Pipeline
 
@@ -1719,6 +1760,8 @@ but at inference:
 
 ---
 
+
+
 # 41. Definition of Success
 
 The project is successful if experiments demonstrate:
@@ -1732,6 +1775,8 @@ The project is successful if experiments demonstrate:
 7. The improvement can be explained through retrieval-quality analysis rather than only aggregate forecasting metrics.
 
 ---
+
+
 
 # 42. First Implementation Priority
 
