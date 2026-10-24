@@ -1,10 +1,16 @@
-"""正例门槛、年份切分、验证/测试随机划分，以及 MOMENT 补齐的自检。"""
+"""正例门槛、年份切分、验证/测试随机划分、MOMENT 补齐，以及生成器前向的自检。"""
+
+import inspect
 
 import numpy as np
 import torch
 
+from generator.config import Config as GeneratorConfig
+from generator.evaluate import forecast_metrics
+from generator.model import ForecastGenerator
+from generator.retrieve import empty_retrieved, gather_cases
 from retriever.config import Config
-from retriever.data import _origins, pacific_midnight, random_eval_split
+from retriever.data import WindowSet, _origins, pacific_midnight, random_eval_split
 from retriever.model import pad_to_moment
 from retriever.sampling import classify_candidates
 
@@ -62,10 +68,64 @@ def test_pad_to_moment_masks_left_pad_only():
     assert torch.equal(x_enc[0, 0, 8:], windows[0])
 
 
+def test_generator_forward_has_no_current_y_and_handles_k0():
+    config = GeneratorConfig()
+    model = ForecastGenerator(config, history_hours=504, horizon_hours=168)
+    names = inspect.signature(model.forward).parameters
+    assert "y" not in names
+    x = torch.arange(504, dtype=torch.float32).unsqueeze(0) + 1000
+    xi = torch.zeros(1, 0, 504)
+    yi = torch.zeros(1, 0, 168)
+    y_hat, center, scale = model(x, xi, yi)
+    assert tuple(y_hat.shape) == (1, 168)
+    assert torch.allclose(center.squeeze(), x.mean())
+    assert torch.allclose(scale.squeeze(), x.std(unbiased=False), atol=1e-5)
+
+
+def test_generator_forward_accepts_retrieved_cases():
+    config = GeneratorConfig()
+    model = ForecastGenerator(config, history_hours=504, horizon_hours=168)
+    x = torch.randn(2, 504)
+    xi = torch.randn(2, 5, 504)
+    yi = torch.randn(2, 5, 168)
+    y_hat, _, _ = model(x, xi, yi)
+    assert tuple(y_hat.shape) == (2, 168)
+
+
+def test_gather_cases_keeps_empty_k():
+    database = WindowSet(
+        name="database",
+        x=np.arange(20, dtype=np.float32).reshape(2, 10),
+        y=np.arange(8, dtype=np.float32).reshape(2, 4),
+        origin_utc=np.array(["2024-01-01", "2024-01-02"], dtype="datetime64[h]"),
+        future_end_utc=np.array(["2024-01-08", "2024-01-09"], dtype="datetime64[h]"),
+    )
+    retrieved = empty_retrieved(3)
+    xi, yi = gather_cases(database, retrieved.indices)
+    assert xi.shape == (3, 0, 10)
+    assert yi.shape == (3, 0, 4)
+
+
+def test_forecast_metrics_split_by_day():
+    y = np.zeros((2, 168), dtype=np.float32)
+    y_hat = np.zeros((2, 168), dtype=np.float32)
+    y_hat[:, :24] = 2.0
+    result = forecast_metrics(y, y_hat, patch_hours=24)
+    assert result["day_mae"][0] == 2.0
+    assert result["day_mae"][1] == 0.0
+    assert len(result["day_mae"]) == 7
+    assert result["mae"] == round(2.0 * 24 / 168, 4)
+
+
 if __name__ == "__main__":
     test_positive_needs_top_tail_and_floor()
     test_positive_falls_back_to_argmax()
     test_train_origins_stay_in_2025_eval_starts_in_2026()
     test_random_eval_split_uses_all_indices_and_is_not_chronological()
     test_pad_to_moment_masks_left_pad_only()
+    test_generator_forward_has_no_current_y_and_handles_k0()
+    test_generator_forward_accepts_retrieved_cases()
+    test_gather_cases_keeps_empty_k()
+    test_forecast_metrics_split_by_day()
     print("ok")
+

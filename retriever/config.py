@@ -52,8 +52,8 @@ class Config:
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_learning_rate: float = 1e-5
-    # 冻结探针最好的投影。空字符串表示随机初始化投影。
-    init_from: str = "runs/retriever/20261021-194514/encoder.pt"
+    # 默认从原始 MOMENT 起训。只有要接某次投影时才填 encoder.pt。
+    init_from: str = ""
     d_model: int = 128
     num_layers: int = 3
     num_heads: int = 8
@@ -65,7 +65,7 @@ class Config:
     eval_batch_size: int = 8
     hard_negatives: int = 2
     easy_negatives: int = 2
-    epochs: int = 40
+    epochs: int = 100
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
     grad_clip: float = 1.0
