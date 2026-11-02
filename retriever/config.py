@@ -45,13 +45,13 @@ class Config:
     # moment：本地 MOMENT-1-large + 一层投影。scratch：从零训练的小 Transformer。
     encoder: str = "moment"
     moment_path: str = "models/MOMENT-1-large"
-    # 主干权重冻住。use_lora 时只在 T5 的 q/v 上加适配器。
-    freeze_backbone: bool = True
-    use_lora: bool = True
+    # 完整微调：解开 MOMENT，不用 LoRA。投影 1e-4，主干 1e-5。
+    freeze_backbone: bool = False
+    use_lora: bool = False
     lora_rank: int = 8
     lora_alpha: int = 16
     lora_dropout: float = 0.05
-    lora_learning_rate: float = 1e-5
+    backbone_learning_rate: float = 1e-5
     # 默认从原始 MOMENT 起训。只有要接某次投影时才填 encoder.pt。
     init_from: str = ""
     d_model: int = 128
@@ -61,7 +61,7 @@ class Config:
     # scratch 用：每 24 小时合成一个 token。21 天就是 21 个 token。必须能整除 history_hours。
     patch_hours: int = 24
 
-    batch_size: int = 8
+    batch_size: int = 4
     eval_batch_size: int = 8
     hard_negatives: int = 2
     easy_negatives: int = 2

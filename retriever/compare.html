@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test retrieval comparison</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c2430;
+      --muted: #5d6b7c;
+      --line: #d9e0e8;
+      --paper: #f6f8fb;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main { max-width: 1480px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 32px; font-weight: 600; margin: 0 0 8px; }
+    h2 { font-size: 18px; margin: 28px 0 12px; }
+    p { line-height: 1.55; }
+    .muted { color: var(--muted); }
+    .cards, .split, .examples { display: grid; gap: 12px; }
+    .cards { grid-template-columns: repeat(7, 1fr); margin: 20px 0 8px; }
+    .split { grid-template-columns: 1fr 1fr; }
+    .examples { grid-template-columns: repeat(3, 1fr); }
+    .card, .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+    .card span, .panel span, .panel h3 { display: block; color: var(--muted); font-size: 13px; font-family: system-ui, sans-serif; }
+    .card strong { display: block; margin-top: 6px; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .panel h3 { margin: 0 0 4px; font-weight: 600; color: var(--ink); font-size: 15px; font-family: inherit; }
+    canvas { width: 100%; display: block; }
+    .tall { height: 360px; }
+    .short { height: 280px; }
+    @media (max-width: 1100px) {
+      .cards { grid-template-columns: 1fr 1fr 1fr; }
+      .examples { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Test retrieval comparison</h1>
+  <p class="muted">Score is shape similarity between the Top-K historical futures and the true future. Oracle ranks by true future and is an upper bound, not a forecasting method. Hard negatives match the past but not the future; lower is better.</p>
+  <section class="cards">
+    <div class="card"><span>Test queries</span><strong id="queries">—</strong></div>
+    <div class="card"><span>Top-K</span><strong id="topk">—</strong></div>
+    <div class="card"><span>Retriever</span><strong id="retrieved">—</strong></div>
+    <div class="card"><span>Random</span><strong id="random">—</strong></div>
+    <div class="card"><span>Oracle bound</span><strong id="oracle">—</strong></div>
+    <div class="card"><span>Hard-negative rate</span><strong id="hard">—</strong></div>
+    <div class="card"><span>Gap closed</span><strong id="gap">—</strong></div>
+  </section>
+  <section class="split">
+    <div>
+      <h2>Mean future similarity</h2>
+      <div class="panel"><canvas id="sim-bars" class="short" width="700" height="280"></canvas></div>
+    </div>
+    <div>
+      <h2>Hard-negative rate</h2>
+      <div class="panel"><canvas id="hard-bars" class="short" width="700" height="280"></canvas></div>
+    </div>
+  </section>
+  <h2>Future similarity by query</h2>
+  <p class="muted">X-axis ranks queries by Oracle, high to low. The left has queries with a good future in the library; closer lines mean the retriever is nearer the bound.</p>
+  <div class="panel"><canvas id="per-query" class="tall" width="1440" height="360"></canvas></div>
+  <h2>Top-K cases: past vs future</h2>
+  <p class="muted">Each point is a retrieved historical case. Hard negatives should sit lower right: similar past, dissimilar future. Oracle should cluster at the top.</p>
+  <div class="panel"><canvas id="scatter" class="tall" width="1440" height="360"></canvas></div>
+  <h2>Future shapes for three queries</h2>
+  <p class="muted">Windows are standardized on themselves. Retriever, random, and Oracle each show the mean standardized Top-K shape.</p>
+  <section class="examples" id="examples"></section>
+</main>
+<script>
+const DATA = __DATA__;
+const COLORS = {
+  retrieved: "#1f4b99",
+  random: "#5d6b7c",
+  oracle: "#0d7a4f",
+  hard: "#b42318",
+  true: "#1c2430"
+};
+
+function fmt(value, digits = 4) {
+  return Number.isFinite(value) ? value.toFixed(digits) : "—";
+}
+
+document.getElementById("queries").textContent = String(DATA.queries);
+document.getElementById("topk").textContent = String(DATA.top_k);
+document.getElementById("retrieved").textContent = fmt(DATA.retrieved);
+document.getElementById("random").textContent = fmt(DATA.random);
+document.getElementById("oracle").textContent = fmt(DATA.oracle);
+document.getElementById("hard").textContent = fmt(DATA.hard_negative_rate);
+document.getElementById("gap").textContent = DATA.gap_closed == null ? "—" : `${(DATA.gap_closed * 100).toFixed(1)}%`;
+
+function setup(canvas) {
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const pad = { left: 56, right: 18, top: 22, bottom: 42 };
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = "13px sans-serif";
+  return { ctx, width, height, pad, plotW: width - pad.left - pad.right, plotH: height - pad.top - pad.bottom };
+}
+
+function yScale(pad, plotH, y0, y1) {
+  const span = Math.max(y1 - y0, 1e-6);
+  return value => pad.top + (1 - (value - y0) / span) * plotH;
+}
+
+function grid(ctx, pad, width, plotH, y0, y1, ticks = 4) {
+  const yOf = yScale(pad, plotH, y0, y1);
+  ctx.strokeStyle = "#e4ebf2";
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#5d6b7c";
+  for (let tick = 0; tick <= ticks; tick++) {
+    const value = y0 + (y1 - y0) * (tick / ticks);
+    const y = yOf(value);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
+    ctx.fillText(value.toFixed(2), 8, y + 4);
+  }
+  return yOf;
+}
+
+function legend(ctx, items, x, y, width) {
+  const gap = Math.min(140, Math.max(88, (width - x - 12) / Math.max(items.length, 1)));
+  items.forEach((item, index) => {
+    const left = x + index * gap;
+    ctx.fillStyle = item[1];
+    ctx.fillRect(left, y, 14, 8);
+    ctx.fillStyle = "#1c2430";
+    ctx.fillText(item[0], left + 20, y + 8);
+  });
+}
+
+function drawBars(canvasId, items, yLabel) {
+  const canvas = document.getElementById(canvasId);
+  const { ctx, width, height, pad, plotW, plotH } = setup(canvas);
+  const values = items.map(item => item.value).filter(Number.isFinite);
+  if (!values.length) {
+    ctx.fillStyle = "#5d6b7c";
+    ctx.fillText("No values to plot.", pad.left, pad.top + 24);
+    return;
+  }
+  const y0 = 0;
+  const y1 = Math.min(1, Math.max(...values) * 1.15 + 0.02);
+  const yOf = grid(ctx, pad, width, plotH, y0, y1);
+  const slot = plotW / items.length;
+  items.forEach((item, index) => {
+    if (!Number.isFinite(item.value)) return;
+    const barW = slot * 0.46;
+    const x = pad.left + slot * index + (slot - barW) / 2;
+    const y = yOf(item.value);
+    ctx.fillStyle = item.color;
+    ctx.fillRect(x, y, barW, pad.top + plotH - y);
+    ctx.fillStyle = "#1c2430";
+    ctx.fillText(item.value.toFixed(4), x, y - 6);
+    ctx.fillText(item.label, x, height - 16);
+  });
+  ctx.fillText(yLabel, 8, 14);
+}
+
+function drawLines(canvasId, series, xLabel) {
+  const canvas = document.getElementById(canvasId);
+  const { ctx, width, height, pad, plotW, plotH } = setup(canvas);
+  const all = series.flatMap(item => item.values).filter(Number.isFinite);
+  if (!all.length) {
+    ctx.fillStyle = "#5d6b7c";
+    ctx.fillText("No values to plot.", pad.left, pad.top + 24);
+    return;
+  }
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const span = Math.max(max - min, 1e-6);
+  const y0 = min - span * 0.08;
+  const y1 = max + span * 0.08;
+  const yOf = grid(ctx, pad, width, plotH, y0, y1);
+  const n = Math.max(...series.map(item => item.values.length), 1);
+  const xOf = index => pad.left + (n === 1 ? plotW / 2 : (index / (n - 1)) * plotW);
+  series.forEach(item => {
+    ctx.beginPath();
+    item.values.forEach((value, index) => {
+      const x = xOf(index);
+      const y = yOf(value);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = item.width || 2;
+    ctx.setLineDash(item.dash || []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+  legend(ctx, series.map(item => [item.label, item.color]), pad.left, height - 22, width);
+  if (width > 800) ctx.fillText(xLabel, width - 168, height - 14);
+}
+
+function drawScatter(canvasId, groups) {
+  const canvas = document.getElementById(canvasId);
+  const { ctx, width, height, pad, plotW, plotH } = setup(canvas);
+  const all = groups.flatMap(group => group.points);
+  if (!all.length) {
+    ctx.fillStyle = "#5d6b7c";
+    ctx.fillText("No points to plot.", pad.left, pad.top + 24);
+    return;
+  }
+  const x0 = 0;
+  const x1 = 1;
+  const y0 = 0;
+  const y1 = 1;
+  const yOf = grid(ctx, pad, width, plotH, y0, y1);
+  const xOf = value => pad.left + ((value - x0) / Math.max(x1 - x0, 1e-6)) * plotW;
+  groups.forEach(group => {
+    ctx.fillStyle = group.color;
+    group.points.forEach(point => {
+      ctx.beginPath();
+      ctx.arc(xOf(point.past), yOf(point.future), group.radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  });
+  ctx.fillStyle = "#5d6b7c";
+  ctx.fillText("0", pad.left - 2, height - 16);
+  ctx.fillText("Past similarity", width / 2 - 48, height - 14);
+  ctx.fillText("1", width - pad.right - 8, height - 16);
+  legend(ctx, groups.map(group => [group.label, group.color]), pad.left, 8, width);
+}
+
+drawBars("sim-bars", [
+  { label: "Oracle", value: DATA.oracle, color: COLORS.oracle },
+  { label: "Retriever", value: DATA.retrieved, color: COLORS.retrieved },
+  { label: "Random", value: DATA.random, color: COLORS.random }
+], "Similarity");
+
+drawBars("hard-bars", [
+  { label: "Oracle", value: DATA.oracle_hard_negative_rate, color: COLORS.oracle },
+  { label: "Retriever", value: DATA.hard_negative_rate, color: COLORS.hard },
+  { label: "Random", value: DATA.random_hard_negative_rate, color: COLORS.random }
+], "Rate");
+
+drawLines("per-query", [
+  { label: "Oracle", values: DATA.oracle_sorted, color: COLORS.oracle, width: 2 },
+  { label: "Retriever", values: DATA.retrieved_sorted, color: COLORS.retrieved, width: 2.4 },
+  { label: "Random", values: DATA.random_sorted, color: COLORS.random, width: 1.6, dash: [5, 4] }
+], "Queries, Oracle high to low");
+
+drawScatter("scatter", [
+  { label: "Oracle", points: DATA.oracle_points, color: COLORS.oracle, radius: 3.2 },
+  { label: "Retriever (other)", points: DATA.retrieved_points, color: COLORS.retrieved, radius: 3.2 },
+  { label: "Retriever hard negatives", points: DATA.hard_points, color: COLORS.hard, radius: 3.6 }
+]);
+
+const exampleRoot = document.getElementById("examples");
+(DATA.examples || []).forEach((example, index) => {
+  const panel = document.createElement("div");
+  panel.className = "panel";
+  panel.innerHTML = `
+    <h3>${example.title}</h3>
+    <span>${example.origin} · Retriever ${fmt(example.retrieved)} / Random ${fmt(example.random)} / Oracle ${fmt(example.oracle)}</span>
+    <canvas id="ex-${index}" class="short" width="460" height="280"></canvas>`;
+  exampleRoot.appendChild(panel);
+  drawLines(`ex-${index}`, [
+    { label: "True future", values: example.true, color: COLORS.true, width: 2.4 },
+    { label: "Retriever", values: example.retrieved_y, color: COLORS.retrieved, width: 2 },
+    { label: "Oracle", values: example.oracle_y, color: COLORS.oracle, width: 1.6, dash: [5, 4] },
+    { label: "Random", values: example.random_y, color: COLORS.random, width: 1.4, dash: [2, 3] }
+  ], "Future hours");
+});
+</script>
+</body>
+</html>
