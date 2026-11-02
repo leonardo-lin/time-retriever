@@ -2,7 +2,7 @@
 
 这份说明只讲代码怎么接起来。实验规则仍以 `retriever/SPEC.md` 为准。
 
-入口只有一个：`python -m retriever.train` 调用 `train.main`。其余文件不自己启动，只提供类和函数，由 `main` 按顺序调用。
+训练入口是 `python -m retriever.train`。训完后用 `python -m retriever.compare --encoder runs/retriever/<run>/encoder.pt` 画测试对照页。其余文件不自己启动，只提供类和函数。
 
 ## 一次运行怎么走
 
@@ -34,9 +34,10 @@ train.main
         ├─ train.append_metric                  追加一行 metrics.jsonl，网页下一秒就能看到
         └─ train.save_model                     验证检索升高才覆盖 encoder.pt
   │
-  └─ evaluate.evaluate_retrieval(model, database, test)
+  └─ evaluate.rank_retrieval(model, database, test)
         ├─ evaluate.embed                再次调用 RetrieverEncoder，只吃 X
-        └─ sampling.window_similarity    用 Yi 给检索结果打分，不进编码器
+        ├─ sampling.window_similarity    用 Yi 给检索结果打分，不进编码器
+        └─ compare.write_html            写出 test_retrieval.html
 ```
 
 测试查询的 `WindowSet` 不进入 `build_pools`，也不进入 `run_epoch`。它只在训练结束后的 `evaluate_retrieval` 里出现。验证查询每轮也会走一次 `evaluate_retrieval`，用来存模型。
@@ -103,7 +104,7 @@ build_pools(queries, database, config)
 
 ### `model.py`：只认识负荷窗口
 
-`pad_to_moment` 把 `(batch, 504)` 左边补到 512，并给出 mask。`RetrieverEncoder.forward` 在 `encoder=moment` 时调用本地 MOMENT 的 `embed(reduction="mean")`，再投影成 128 维单位向量。`use_lora` 时用 peft 给 T5 encoder 的 `q`/`v` 加适配器，patch 嵌入仍冻结。默认不读旧的 `encoder.pt`，投影随机初始化，和 LoRA 一起从原始 MOMENT 训。`init_from` 有值才载入某次投影。只冻不训适配器时，`train()` 会把 backbone 留在 eval。
+`pad_to_moment` 把 `(batch, 504)` 左边补到 512，并给出 mask。`RetrieverEncoder.forward` 在 `encoder=moment` 时调用本地 MOMENT 的 `embed(reduction="mean")`，再投影成 128 维单位向量。默认完整微调主干。`use_lora` 时改给 T5 的 `q`/`v` 加适配器并冻住主干。`init_from` 有值才载入某次投影。只冻不训适配器时，`train()` 会把 backbone 留在 eval。
 
 `encoder=scratch` 时仍走原来的小 Transformer：`standardize_windows`、按 24 小时切 token、编码、投影。`standardize_windows` 和 `sampling.zscore_rows` 做同一件事，只是一个在 GPU 上。
 
@@ -144,7 +145,11 @@ database.y[那些行号]          这就是按行号查出 Yi
 window_similarity             拿 Yi 和测试查询的 Y 比较
 ```
 
-`embed` 内部调用的是 `RetrieverEncoder`，与训练共用同一个前向过程。Oracle 和随机对照不调用编码器，只比较 `window_similarity` 的分数。
+`embed` 内部调用的是 `RetrieverEncoder`，与训练共用同一个前向过程。Oracle 和随机对照不调用编码器，只比较 `window_similarity` 的分数。`score_retrieval` 同时给出每条查询的分数和难负例占比，供对照页画图。`evaluate_retrieval` 仍只返回均值，给训练循环写日志。
+
+### `compare.py` 和 `compare.html`
+
+`python -m retriever.compare` 从 `encoder.pt` 还原切分，再调用 `rank_retrieval`。页面画出：平均未来相似度、难负例占比、按 Oracle 排序的逐条曲线、Top-K 案例的过去/未来散点，以及检索最好/中位/最差三条查询的未来形状。网页写进该次运行目录的 `test_retrieval.html`。
 
 ### `monitor.py` 和 `monitor.html`
 
