@@ -26,7 +26,9 @@
     p { line-height: 1.55; }
     .muted { color: var(--muted); }
     .cards, .split { display: grid; gap: 12px; }
-    .cards { grid-template-columns: repeat(5, 1fr); margin-top: 20px; }
+    .cards { grid-template-columns: repeat(6, 1fr); margin-top: 20px; }
+    .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; margin-top: 12px; }
+    .days .card strong { font-size: 16px; }
     .split { grid-template-columns: repeat(3, 1fr); }
     .card, .panel {
       background: var(--card);
@@ -53,9 +55,11 @@
     <div class="card"><span>训练 MSE</span><strong id="train-loss">—</strong></div>
     <div class="card"><span>验证 MSE</span><strong id="val-loss">—</strong></div>
     <div class="card"><span>验证 MAE</span><strong id="val-mae">—</strong></div>
+    <div class="card"><span>验证 RMSE</span><strong id="val-rmse">—</strong></div>
     <div class="card"><span>检索来源</span><strong id="source">—</strong></div>
     <div class="card"><span>K</span><strong id="top-k">—</strong></div>
   </section>
+  <section class="days" id="val-days"></section>
   <h2>损失曲线</h2>
   <div class="panel"><canvas id="chart" width="1040" height="420"></canvas></div>
   <h2>这次实验的数据</h2>
@@ -188,18 +192,26 @@ function renderSummary(summary) {
   ).join("");
 }
 
-function renderTest(row) {
-  if (!row) return;
-  const days = (row.day_mae || []).map((mae, index) => `<li>第 ${index + 1} 天 MAE：${mae.toFixed(4)}</li>`).join("");
-  document.getElementById("test-box").innerHTML = `
-    <span>反标准化后的 MW 误差。MAPE 是百分比。</span>
-    <ul>
-      <li>MAE：${row.mae.toFixed(4)}</li>
-      <li>RMSE：${row.rmse.toFixed(4)}</li>
-      <li>MAPE：${row.mape.toFixed(4)}%</li>
-      <li>K：${row.top_k}</li>
-      ${days}
-    </ul>`;
+function renderTests(rows) {
+  if (!rows.length) return;
+  const blocks = rows.map(row => {
+    const label = row.retrieval_source ? `输入 ${row.retrieval_source}` : "测试";
+    const days = (row.day_mae || []).map((mae, index) => {
+      const rmse = (row.day_rmse || [])[index];
+      const rmseText = Number.isFinite(rmse) ? rmse.toFixed(4) : "—";
+      return `<li>第 ${index + 1} 天 MAE：${mae.toFixed(4)}　RMSE：${rmseText}</li>`;
+    }).join("");
+    return `
+      <span>${label}。反标准化后的 MW 误差。MAPE 是百分比。</span>
+      <ul>
+        <li>MAE：${row.mae.toFixed(4)}</li>
+        <li>RMSE：${row.rmse.toFixed(4)}</li>
+        <li>MAPE：${row.mape.toFixed(4)}%</li>
+        <li>K：${row.top_k}</li>
+        ${days}
+      </ul>`;
+  });
+  document.getElementById("test-box").innerHTML = blocks.join("");
 }
 
 async function refresh() {
@@ -209,17 +221,26 @@ async function refresh() {
     const rows = metricRes.ok ? await metricRes.json() : [];
     const steps = rows.filter(row => row.kind === "step");
     const epochs = rows.filter(row => row.kind === "epoch");
-    const test = rows.findLast(row => row.kind === "test");
+    const tests = rows.filter(row => row.kind === "test");
     const last = steps[steps.length - 1];
     const lastEpoch = epochs[epochs.length - 1];
     showNumber("train-loss", last ? last.loss : NaN);
     showNumber("val-loss", lastEpoch ? lastEpoch.val_loss : NaN);
     showNumber("val-mae", lastEpoch ? lastEpoch.val_mae : NaN);
+    showNumber("val-rmse", lastEpoch ? lastEpoch.val_rmse : NaN);
+    const valDays = document.getElementById("val-days");
+    const valMae = lastEpoch && lastEpoch.val_day_mae ? lastEpoch.val_day_mae : [];
+    const valRmse = lastEpoch && lastEpoch.val_day_rmse ? lastEpoch.val_day_rmse : [];
+    valDays.innerHTML = valMae.map((mae, index) => {
+      const rmse = valRmse[index];
+      const rmseText = Number.isFinite(rmse) ? rmse.toFixed(4) : "—";
+      return `<div class="card"><span>验证第 ${index + 1} 天</span><strong>MAE ${mae.toFixed(4)}</strong><span>RMSE ${rmseText}</span></div>`;
+    }).join("");
     document.getElementById("status").textContent = last
       ? `第 ${last.epoch} 轮，第 ${last.step} 步。曲线每秒刷新；粗线是 8 步滑动平均。`
       : "数据已就绪。正在预计算检索或开始第一轮。";
     drawChart(steps, epochs);
-    renderTest(test);
+    renderTests(tests);
   } catch (error) {
     document.getElementById("status").textContent = "监控页面连不上训练进程。";
   }

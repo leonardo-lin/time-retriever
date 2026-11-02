@@ -7,9 +7,14 @@ from dataclasses import asdict, dataclass
 class Config:
     # 必须指向检索器的 encoder.pt。frozen / none 都要用里面的 config 切数据。
     encoder_path: str = ""
-    # frozen：预计算 Top-K。none：K=0，不构造检索器。
+    # frozen：冻结检索器 Top-K。oracle：按未来相似度取正解 Top-K。none：K=0。
     retrieval_source: str = "frozen"
-    top_k: int = 5
+    top_k: int = 2
+
+    # moment：本地 MOMENT-1-large 的预测头。scratch：从零训练的拼接 Transformer。
+    backbone: str = "moment"
+    moment_path: str = "models/MOMENT-1-large"
+    freeze_backbone: bool = True
 
     d_model: int = 256
     num_layers: int = 4
@@ -17,8 +22,8 @@ class Config:
     dropout: float = 0.2
     patch_hours: int = 24
 
-    batch_size: int = 32
-    epochs: int = 100
+    batch_size: int = 8
+    epochs: int = 40
     learning_rate: float = 1e-4
     weight_decay: float = 1e-4
     grad_clip: float = 1.0

@@ -28,6 +28,8 @@ from generator.retrieve import (
     gather_cases,
     load_frozen_encoder,
     read_checkpoint,
+    retrieve_oracle,
+    retrieve_queries,
     retrieve_splits,
     retriever_config_from_checkpoint,
 )
@@ -111,7 +113,8 @@ def run_epoch(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="训练检索增强负荷预测生成器")
     parser.add_argument("--encoder", type=str, help="检索器 encoder.pt 路径")
-    parser.add_argument("--source", choices=("frozen", "none"))
+    parser.add_argument("--source", choices=("frozen", "oracle", "none"))
+    parser.add_argument("--backbone", choices=("moment", "scratch"))
     parser.add_argument("--top-k", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--batch-size", type=int)
@@ -128,6 +131,8 @@ def main() -> None:
         config.encoder_path = args.encoder
     if args.source is not None:
         config.retrieval_source = args.source
+    if args.backbone is not None:
+        config.backbone = args.backbone
     if args.top_k is not None:
         config.top_k = args.top_k
     if args.epochs is not None:
@@ -136,7 +141,7 @@ def main() -> None:
         config.batch_size = args.batch_size
     if args.port is not None:
         config.monitor_port = args.port
-    if config.retrieval_source not in ("frozen", "none"):
+    if config.retrieval_source not in ("frozen", "oracle", "none"):
         raise RuntimeError(f"不支持的 retrieval_source：{config.retrieval_source}")
     if not config.encoder_path:
         raise RuntimeError("请用 --encoder 指向检索器的 encoder.pt。")
@@ -177,6 +182,12 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.empty_cache()
         k = config.top_k
+    elif config.retrieval_source == "oracle":
+        print("按未来相似度预计算正解 Top-K…")
+        train_hit = retrieve_oracle(train, database, config.top_k, retriever_config.future_temperature)
+        val_hit = retrieve_oracle(val, database, config.top_k, retriever_config.future_temperature)
+        test_hit = retrieve_oracle(test, database, config.top_k, retriever_config.future_temperature)
+        k = config.top_k
     else:
         train_hit, val_hit, test_hit = (
             empty_retrieved(len(train)),
@@ -206,7 +217,15 @@ def main() -> None:
         webbrowser.open(url)
 
     model = ForecastGenerator(config, retriever_config.history_hours, retriever_config.horizon_hours).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    frozen = sum(parameter.numel() for parameter in model.parameters() if not parameter.requires_grad)
+    print(
+        f"生成器 {config.backbone}，冻结主干 {config.freeze_backbone}，"
+        f"可训练 {sum(item.numel() for item in trainable)}，冻结 {frozen}"
+    )
+    if not trainable:
+        raise RuntimeError("没有可训练参数。检查 backbone 和 freeze_backbone。")
+    optimizer = torch.optim.AdamW(trainable, lr=config.learning_rate, weight_decay=config.weight_decay)
     train_rng = np.random.default_rng(retriever_config.seed)
     best_val = float("inf")
     best_epoch = 0
@@ -236,11 +255,19 @@ def main() -> None:
                 "train_loss": None if np.isnan(train_loss) else round(train_loss, 6),
                 "val_loss": None if np.isnan(val_loss) else round(val_loss, 6),
                 "val_mae": val_mae,
+                "val_rmse": val_forecast["rmse"],
+                "val_day_mae": val_forecast["day_mae"],
+                "val_day_rmse": val_forecast["day_rmse"],
             })
+            val_days = "  ".join(
+                f"第{i + 1}天 MAE {mae:.4f} RMSE {rmse:.4f}"
+                for i, (mae, rmse) in enumerate(zip(val_forecast["day_mae"], val_forecast["day_rmse"]))
+            )
             print(
                 f"第 {epoch:02d} 轮  训练 MSE {train_loss:.4f}  验证 MSE {val_loss:.4f}  "
-                f"验证 MAE {val_mae:.4f}"
+                f"验证 MAE {val_mae:.4f}  RMSE {val_forecast['rmse']:.4f}"
             )
+            print(val_days)
             save_model(run_dir / "generator_last.pt", model, config, retriever_config)
             if val_mae < best_val:
                 best_val = val_mae
@@ -250,14 +277,35 @@ def main() -> None:
         print("在测试查询上评估预测…")
         stored = torch.load(run_dir / "generator.pt", map_location=device, weights_only=False)
         model.load_state_dict(stored["model"])
-        result = evaluate_forecast(model, test, database, test_hit, config, device)
-        append_metric(metrics_path, result)
-        days = "  ".join(f"第{i + 1}天 {mae:.4f}" for i, mae in enumerate(result["day_mae"]))
-        print(
-            f"测试 MAE {result['mae']:.4f}  RMSE {result['rmse']:.4f}  "
-            f"MAPE {result['mape']:.4f}%  K={result['top_k']}"
-        )
-        print(days)
+        reports = [(config.retrieval_source, test_hit)]
+        if config.retrieval_source == "oracle":
+            print("加载冻结检索器，对照一般检索输入…")
+            encoder = load_frozen_encoder(checkpoint, retriever_config, device)
+            frozen_hit = retrieve_queries(
+                encoder,
+                database,
+                test,
+                k,
+                device,
+                retriever_config.eval_batch_size,
+            )
+            del encoder
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            reports.append(("frozen", frozen_hit))
+        for source, hit in reports:
+            result = evaluate_forecast(model, test, database, hit, config, device)
+            result["retrieval_source"] = source
+            append_metric(metrics_path, result)
+            days = "  ".join(
+                f"第{i + 1}天 MAE {mae:.4f} RMSE {rmse:.4f}"
+                for i, (mae, rmse) in enumerate(zip(result["day_mae"], result["day_rmse"]))
+            )
+            print(
+                f"测试[{source}] MAE {result['mae']:.4f}  RMSE {result['rmse']:.4f}  "
+                f"MAPE {result['mape']:.4f}%  K={result['top_k']}"
+            )
+            print(days)
         print(f"最好的模型：第 {best_epoch} 轮，验证 MAE {best_val:.4f}，{run_dir / 'generator.pt'}")
     except KeyboardInterrupt:
         save_model(run_dir / "generator_last.pt", model, config, retriever_config)

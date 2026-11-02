@@ -1,4 +1,4 @@
-"""加载冻结检索器，预计算 Top-K 行号。不读当前查询的 Y。"""
+"""预计算 Top-K 行号。冻结检索不读当前 Y；oracle 只用 Y 排名，不把 Y 送进生成器。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from retriever.config import Config as RetrieverConfig
 from retriever.data import WindowSet
 from retriever.evaluate import embed
 from retriever.model import RetrieverEncoder
+from retriever.sampling import window_similarity
 
 
 @dataclass
@@ -50,6 +51,37 @@ def load_frozen_encoder(checkpoint: dict, config: RetrieverConfig, device: torch
     for parameter in model.parameters():
         parameter.requires_grad = False
     return model
+
+
+def retrieve_queries(
+    model: RetrieverEncoder,
+    database: WindowSet,
+    queries: WindowSet,
+    k: int,
+    device: torch.device,
+    batch_size: int,
+) -> Retrieved:
+    if k <= 0:
+        return empty_retrieved(len(queries))
+    if k > len(database):
+        raise RuntimeError(f"K={k} 大于检索库 {len(database)} 条。")
+    database_z = embed(model, database.x, device, batch_size=batch_size)
+    query_z = embed(model, queries.x, device, batch_size=batch_size)
+    indices = torch.topk(query_z @ database_z.T, k=k, dim=1).indices.cpu().numpy().astype(np.int64)
+    return Retrieved(indices)
+
+
+def retrieve_oracle(queries: WindowSet, database: WindowSet, k: int, temperature: float) -> Retrieved:
+    """按真实未来相似度取 Top-K。当前 Y 只用来排名。"""
+    if k <= 0:
+        return empty_retrieved(len(queries))
+    if k > len(database):
+        raise RuntimeError(f"K={k} 大于检索库 {len(database)} 条。")
+    future_similarity = window_similarity(queries.y, database.y, temperature)
+    part = np.argpartition(-future_similarity, k - 1, axis=1)[:, :k]
+    rows = np.arange(len(queries))[:, None]
+    order = np.argsort(-future_similarity[rows, part], axis=1)
+    return Retrieved(np.take_along_axis(part, order, axis=1).astype(np.int64))
 
 
 def retrieve_splits(

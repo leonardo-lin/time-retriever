@@ -17,9 +17,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from retriever.compare import page_payload, write_html
 from retriever.config import Config
 from retriever.data import WindowSet, load_experiment
-from retriever.evaluate import evaluate_retrieval
+from retriever.evaluate import evaluate_retrieval, rank_retrieval
 from retriever.loss import retriever_losses
 from retriever.model import RetrieverEncoder
 from retriever.monitor import start_monitor
@@ -238,7 +239,7 @@ def main() -> None:
     adapters = [parameter for name, parameter in model.named_parameters() if parameter.requires_grad and not name.startswith("output.")]
     print(
         f"编码器 {config.encoder}，冻结主干 {config.freeze_backbone}，LoRA {config.use_lora}，"
-        f"投影 {sum(item.numel() for item in head)}，适配器 {sum(item.numel() for item in adapters)}"
+        f"投影 {sum(item.numel() for item in head)}，其余可训练 {sum(item.numel() for item in adapters)}"
     )
     if not head and not adapters:
         raise RuntimeError("没有可训练参数。若在用 MOMENT，检查 freeze_backbone、use_lora 和投影层。")
@@ -246,7 +247,7 @@ def main() -> None:
     if head:
         groups.append({"params": head, "lr": config.learning_rate})
     if adapters:
-        groups.append({"params": adapters, "lr": config.lora_learning_rate})
+        groups.append({"params": adapters, "lr": config.backbone_learning_rate})
     optimizer = torch.optim.AdamW(groups, weight_decay=config.weight_decay)
     train_rng = np.random.default_rng(config.seed)
     best_val = -float("inf")
@@ -294,8 +295,11 @@ def main() -> None:
         print("在测试查询上评估检索质量…")
         checkpoint = torch.load(run_dir / "encoder.pt", map_location=device, weights_only=False)
         model.load_state_dict(checkpoint["model"])
-        result = evaluate_retrieval(model, database, test, config, device)
+        ranked = rank_retrieval(model, database, test, config, device)
+        result = ranked["summary"]
         append_metric(metrics_path, result)
+        html_path = run_dir / "test_retrieval.html"
+        write_html(html_path, page_payload(ranked, database, test))
         print(
             f"Top-{result['top_k']} 未来相似度  "
             f"检索器 {result['retrieved_future_similarity']:.4f}  "
@@ -304,6 +308,7 @@ def main() -> None:
             f"难负例占比 {result['hard_negative_rate']}"
         )
         print(f"最好的模型：第 {best_epoch} 轮，验证检索 {best_val:.4f}，{run_dir / 'encoder.pt'}")
+        print(f"测试对照页：{html_path}")
     except KeyboardInterrupt:
         save_model(run_dir / "encoder_last.pt", model, config)
         print("\n训练已中断，当前模型写在 encoder_last.pt。")

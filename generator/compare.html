@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test forecast comparison</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c2430;
+      --muted: #5d6b7c;
+      --line: #d9e0e8;
+      --paper: #f6f8fb;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main { max-width: 1480px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 32px; font-weight: 600; margin: 0 0 8px; }
+    p { line-height: 1.55; }
+    .muted { color: var(--muted); }
+    .cards, .days { display: grid; gap: 12px; margin: 20px 0 24px; }
+    .cards { grid-template-columns: repeat(5, 1fr); }
+    .days { grid-template-columns: repeat(7, 1fr); margin-top: 0; }
+    .card, .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+    .card span { display: block; color: var(--muted); font-size: 13px; font-family: sans-serif; }
+    .card strong { display: block; margin-top: 6px; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .days .card strong { font-size: 16px; }
+    canvas { width: 100%; height: 640px; display: block; }
+    @media (max-width: 800px) {
+      .cards, .days { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Test forecast comparison</h1>
+  <p class="muted">X-axis ranks true load from low to high. The blue line is the true series; red dots are predictions for the same hours. Closer overlay means both low and high load are tracked.</p>
+  <section class="cards">
+    <div class="card"><span>Test queries</span><strong id="queries">—</strong></div>
+    <div class="card"><span>Hourly points</span><strong id="points">—</strong></div>
+    <div class="card"><span>MAE</span><strong id="mae">—</strong></div>
+    <div class="card"><span>RMSE</span><strong id="rmse">—</strong></div>
+    <div class="card"><span>Retrieval / K</span><strong id="source">—</strong></div>
+  </section>
+  <section class="days" id="days"></section>
+  <div class="panel"><canvas id="chart" width="1420" height="640"></canvas></div>
+</main>
+<script>
+const DATA = __DATA__;
+const COLORS = { true: "#1f4b99", pred: "#b42318" };
+
+document.getElementById("queries").textContent = String(DATA.queries);
+document.getElementById("points").textContent = String(DATA.points);
+document.getElementById("mae").textContent = DATA.mae.toFixed(4);
+document.getElementById("rmse").textContent = DATA.rmse.toFixed(4);
+document.getElementById("source").textContent = `${DATA.retrieval_source} / ${DATA.top_k}`;
+document.getElementById("days").innerHTML = (DATA.day_mae || []).map((mae, index) => {
+  const rmse = (DATA.day_rmse || [])[index];
+  const rmseText = Number.isFinite(rmse) ? rmse.toFixed(4) : "—";
+  return `<div class="card"><span>Day ${index + 1}</span><strong>MAE ${mae.toFixed(4)}</strong><span>RMSE ${rmseText}</span></div>`;
+}).join("");
+
+const canvas = document.getElementById("chart");
+const ctx = canvas.getContext("2d");
+const width = canvas.width;
+const height = canvas.height;
+const pad = { left: 72, right: 24, top: 24, bottom: 42 };
+const plotW = width - pad.left - pad.right;
+const plotH = height - pad.top - pad.bottom;
+const trueVals = DATA.true || [];
+const predVals = DATA.pred || [];
+const all = trueVals.concat(predVals);
+ctx.font = "14px sans-serif";
+ctx.fillStyle = "#5d6b7c";
+if (!all.length) {
+  ctx.fillText("No points to plot.", pad.left, pad.top + 24);
+} else {
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const span = Math.max(max - min, 1e-6);
+  const y0 = min - span * 0.08;
+  const y1 = max + span * 0.08;
+  const xCount = Math.max(trueVals.length - 1, 1);
+  function xOf(index) { return pad.left + (index / xCount) * plotW; }
+  function yOf(value) { return pad.top + (1 - (value - y0) / (y1 - y0)) * plotH; }
+
+  ctx.strokeStyle = "#e4ebf2";
+  ctx.lineWidth = 1;
+  for (let tick = 0; tick <= 4; tick++) {
+    const value = y0 + (y1 - y0) * (tick / 4);
+    const y = yOf(value);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
+    ctx.fillStyle = "#5d6b7c";
+    ctx.fillText(value.toFixed(1), 8, y + 4);
+  }
+
+  function stroke(values, color) {
+    ctx.beginPath();
+    values.forEach((value, index) => {
+      const x = xOf(index);
+      const y = yOf(value);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  function dots(values, color) {
+    ctx.fillStyle = color;
+    values.forEach((value, index) => {
+      ctx.beginPath();
+      ctx.arc(xOf(index), yOf(value), 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+  dots(predVals, COLORS.pred);
+  stroke(trueVals, COLORS.true);
+
+  ctx.fillStyle = COLORS.true;
+  ctx.fillRect(pad.left, height - 22, 14, 8);
+  ctx.fillStyle = COLORS.pred;
+  ctx.beginPath();
+  ctx.arc(pad.left + 167, height - 18, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1c2430";
+  ctx.fillText("True (sorted)", pad.left + 20, height - 14);
+  ctx.fillText("Predicted", pad.left + 180, height - 14);
+  ctx.fillText("True load, low to high", width - 200, height - 14);
+}
+</script>
+</body>
+</html>
