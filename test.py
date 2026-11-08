@@ -247,11 +247,18 @@ def test_compare_uses_checkpoint_top_k_not_current_default():
     assert resolve_top_k({"top_k": 2}, "oracle", None) == 2
     assert resolve_top_k({"top_k": 5}, "none", None) == 0
     assert resolve_top_k({"top_k": 5}, "frozen", 2) == 2
+    assert resolve_top_k({"top_k": 0}, "oracle", 5) == 5
     try:
         resolve_top_k({}, "frozen", None)
     except RuntimeError:
+        pass
+    else:
+        raise AssertionError("missing top_k should stop")
+    try:
+        resolve_top_k({"top_k": 0}, "oracle", None)
+    except RuntimeError:
         return
-    raise AssertionError("missing top_k should stop")
+    raise AssertionError("zero top_k for oracle should stop")
 
 
 def test_chronos2_point_forecast_takes_first_variate():

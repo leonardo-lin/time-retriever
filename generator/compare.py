@@ -3,6 +3,7 @@
 在项目根目录执行：
 
     ./venv/bin/python -m generator.compare --generator runs/generator/<run>/generator.pt
+    ./venv/bin/python -m generator.compare --generator runs/generator/<run>/generator.pt --source frozen --encoder runs/retriever/<run>/encoder.pt
 """
 
 from __future__ import annotations
@@ -48,7 +49,10 @@ def resolve_top_k(saved_config: dict, source: str, override: int | None) -> int:
         return int(override)
     if "top_k" not in saved_config:
         raise RuntimeError("generator.pt 里没有 top_k，请用 --top-k 指定这次训练用的 K。")
-    return int(saved_config["top_k"])
+    k = int(saved_config["top_k"])
+    if k <= 0:
+        raise RuntimeError("这次对照要用检索案例，但 checkpoint 的 top_k 是 0，请用 --top-k 指定。")
+    return k
 
 
 def downsample(values: np.ndarray, cap: int = 4000) -> list[float]:
@@ -93,6 +97,8 @@ def write_html(path: Path, payload: dict) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="按真实负荷从低到高对照生成器测试预测")
     parser.add_argument("--generator", required=True, help="生成器 generator.pt 路径")
+    parser.add_argument("--source", choices=("frozen", "oracle", "none"), help="覆盖测试输入来源；默认跟训练时一致")
+    parser.add_argument("--encoder", type=str, help="覆盖冻结检索器 encoder.pt；仅 --source frozen 时有用")
     parser.add_argument("--top-k", type=int, help="覆盖 checkpoint 里的 K；默认用训练时的值")
     parser.add_argument("--no-browser", action="store_true")
     return parser.parse_args()
@@ -112,7 +118,14 @@ def main() -> None:
     if "retriever_config" not in stored:
         raise RuntimeError("generator.pt 里没有 retriever_config，无法复原数据切分。")
     config = generator_config_from_checkpoint(stored)
-    k = resolve_top_k(stored["config"], config.retrieval_source, args.top_k)
+    trained_source = config.retrieval_source
+    source = args.source if args.source is not None else trained_source
+    if source not in ("frozen", "oracle", "none"):
+        raise RuntimeError(f"不支持的 retrieval_source：{source}")
+    config.retrieval_source = source
+    if args.encoder is not None:
+        config.encoder_path = args.encoder
+    k = resolve_top_k(stored["config"], source, args.top_k)
     config.top_k = k
     retriever_config = retriever_config_from_checkpoint({"config": stored["retriever_config"]})
     np.random.seed(retriever_config.seed)
@@ -121,13 +134,13 @@ def main() -> None:
     print("读取负荷并切分窗口…")
     database, _train, _val, test, summary = load_experiment(retriever_config, root)
     print(f"测试 {summary['test_cases']} 条：{summary['test_start']} → {summary['test_end']}")
-    print(f"这份生成器 retrieval_source={config.retrieval_source}，K={k}")
+    print(f"训练时 retrieval_source={trained_source}；这次测试输入={source}，K={k}")
 
-    if config.retrieval_source == "frozen":
+    if source == "frozen":
         if not config.encoder_path:
-            raise RuntimeError("这个生成器是冻结检索训的，但 checkpoint 里没有 encoder_path。")
+            raise RuntimeError("要用冻结检索做对照，请传 --encoder，或确认 generator.pt 里有 encoder_path。")
         encoder_path = resolve_path(root, config.encoder_path)
-        print("加载冻结检索器并预计算 Top-K…")
+        print(f"加载冻结检索器 {encoder_path} 并预计算 Top-K…")
         encoder = load_frozen_encoder(read_checkpoint(encoder_path), retriever_config, device)
         test_hit = retrieve_queries(
             encoder,
@@ -140,14 +153,12 @@ def main() -> None:
         del encoder
         if device.type == "cuda":
             torch.cuda.empty_cache()
-    elif config.retrieval_source == "oracle":
+    elif source == "oracle":
         print("按未来相似度取正解 Top-K…")
         test_hit = retrieve_oracle(test, database, k, retriever_config.future_temperature)
-    elif config.retrieval_source == "none":
+    else:
         test_hit = empty_retrieved(len(test))
         print("无检索基线：K=0。")
-    else:
-        raise RuntimeError(f"不支持的 retrieval_source：{config.retrieval_source}")
 
     model = ForecastGenerator(config, retriever_config.history_hours, retriever_config.horizon_hours).to(device)
     model.load_state_dict(stored["model"])
@@ -157,8 +168,9 @@ def main() -> None:
     ranked = sort_by_true(test.y, y_hat, test.origin_utc)
 
     out_dir = generator_path.parent
-    csv_path = out_dir / "test_sorted.csv"
-    html_path = out_dir / "test_sorted.html"
+    suffix = f"_{source}" if args.source is not None else ""
+    csv_path = out_dir / f"test_sorted{suffix}.csv"
+    html_path = out_dir / f"test_sorted{suffix}.html"
     write_csv(csv_path, ranked)
     write_html(
         html_path,
@@ -170,7 +182,7 @@ def main() -> None:
             "mape": metrics["mape"],
             "day_mae": metrics["day_mae"],
             "day_rmse": metrics["day_rmse"],
-            "retrieval_source": config.retrieval_source,
+            "retrieval_source": source,
             "top_k": k,
             "true": downsample(ranked["true"]),
             "pred": downsample(ranked["pred"]),
